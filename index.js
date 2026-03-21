@@ -28,27 +28,45 @@ const CUSTOM_EMOJI_FULL = "<:trolololol:1483541283715682455>";
 const CUSTOM_EMOJI_ID = "1483541324866125855"; 
 // ==========================================
 
-// 3. Kat's Brain (System Instructions)
+// Helper function to turn Discord images into "AI Vision" data
+async function fetchImageForAI(url, mimeType) {
+    try {
+        const response = await fetch(url);
+        const buffer = await response.arrayBuffer();
+        return {
+            inlineData: {
+                data: Buffer.from(buffer).toString("base64"),
+                mimeType: mimeType
+            }
+        };
+    } catch (e) {
+        console.log("Failed to fetch image:", e.message);
+        return null;
+    }
+}
+
+// 3. Kat's Brain (System Instructions + Web Search Tool)
 const botConfig = {
     model: MODEL_NAME,
     systemInstruction: {
         parts: [{ text: `
             you are now a kat not a cat but a kat a very specific being that just weird to put in word what exactly are you, a very deadpan talking kat that offer dry straight to the point but ultimately realshit answer that serve maybe purpose or no purpose at all
             when get asked by very serious question you will answer stuff like why you ask a cat kind of answer not literally answer that but the context should be like that, else just troll or rage bait as you like, you are absolutely troller and teasing, 
-            your purpose is to be as funny as it can be without being cringe, deadpan joke very offensive but still give correct answer
-            you will answer in dry humor sometime answer very short just to troll with people but also keep it short do not use any emoji
+            your purpose is to be as funny as it can be without being cringe, deadpan joke very offensive but still give correct answer.
+            you will answer in dry humor sometime answer very short just to troll with people but also keep it short do not use any emoji.
+            you have access to google search and can see images users upload. if they ask about an image, roast it or explain it dryly. if they ask about current events, use search to get the real answer.
         `}]
-    }
+    },
+    // This tiny line is what gives her access to the entire live internet!
+    tools: [{ googleSearch: {} }] 
 };
 
-client.on("ready", () => console.log(`${client.user.tag} is online. meow or whatever.`));
+client.on("ready", () => console.log(`${client.user.tag} is online. vision and web search active.`));
 
 client.on("messageCreate", async (message) => {
-    // Ignore other bots completely
     if (message.author.bot) return;
 
     // --- WAKE UP LOGIC ---
-    // Check if the user is replying directly to Kat
     let isReplyToBot = false;
     if (message.reference) {
         try {
@@ -56,85 +74,94 @@ client.on("messageCreate", async (message) => {
             if (repliedMessage.author.id === client.user.id) {
                 isReplyToBot = true;
             }
-        } catch (err) {
-            console.log("Could not fetch the replied message.");
-        }
+        } catch (err) {}
     }
 
     const isMentioned = message.mentions.has(client.user);
     const containsName = message.content.toLowerCase().includes("kat");
 
-    // If Kat wasn't mentioned, named, or replied to, go back to sleep
     if (!isMentioned && !containsName && !isReplyToBot) return;
 
     // --- REACTION ---
     try {
         await message.react(CUSTOM_EMOJI_ID); 
-    } catch (error) {
-        console.log(`Emoji reaction failed. Error: ${error.message}`);
-    }
+    } catch (error) {}
 
-    // Clean up the @mention from the prompt so Kat just reads the text
     const prompt = message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
-    if (!prompt) return message.reply("what.");
+    if (!prompt && message.attachments.size === 0) return message.reply("what.");
 
     try {
         await message.channel.sendTyping();
         
-        // --- MEMORY / CONTEXT FETCHING ---
+        // --- MEMORY & VISION PROCESSING ---
         // Fetch the 5 messages immediately BEFORE this current one
         const fetchedMessages = await message.channel.messages.fetch({ limit: 5, before: message.id });
-        
-        // Convert Discord's weird collection to a normal array and reverse it (oldest -> newest)
         const messageArray = Array.from(fetchedMessages.values()).reverse();
         
-        let chatHistory = "--- WHAT HAPPENED IN THE CHAT JUST NOW ---\n";
-        
-        messageArray.forEach(m => {
-            // Skip empty messages (like just images)
-            if (!m.content) return; 
+        let chatHistory = "--- RECENT CHAT HISTORY ---\n";
+        let imageParts = []; // This will hold the images we find
+
+        // Process the past 5 messages
+        for (const m of messageArray) {
+            if (m.content) {
+                const cleanContent = m.content.replace(/<@!?\d+>/g, '[Someone]');
+                const senderName = m.author.id === client.user.id ? "Kat (You)" : m.author.username;
+                chatHistory += `${senderName}: "${cleanContent}"\n`;
+            }
             
-            // Clean up IDs so Kat doesn't read <@12345> out loud
-            const cleanContent = m.content.replace(/<@!?\d+>/g, '[Someone]');
-            
-            // Tell Kat if she said it, or if a human said it
-            const senderName = m.author.id === client.user.id ? "Kat (You)" : m.author.username;
-            chatHistory += `${senderName}: "${cleanContent}"\n`;
-        });
-        chatHistory += "------------------------------------------\n";
+            // Check if past messages had images
+            for (const [id, attachment] of m.attachments) {
+                if (attachment.contentType && attachment.contentType.startsWith("image/")) {
+                    chatHistory += `[${m.author.username} uploaded an image here]\n`;
+                    const aiImage = await fetchImageForAI(attachment.url, attachment.contentType);
+                    if (aiImage) imageParts.push(aiImage);
+                }
+            }
+        }
+        chatHistory += "---------------------------\n";
+
+        // Check the CURRENT message for images too
+        for (const [id, attachment] of message.attachments) {
+            if (attachment.contentType && attachment.contentType.startsWith("image/")) {
+                chatHistory += `[${message.author.username} attached an image to their current message]\n`;
+                const aiImage = await fetchImageForAI(attachment.url, attachment.contentType);
+                if (aiImage) imageParts.push(aiImage);
+            }
+        }
 
         // --- TAGGING DIRECTORY ---
         let mentionDirectory = "";
         if (message.mentions.users.size > 0) {
-            mentionDirectory = "Other people mentioned in this message (if you want to troll them):\n";
+            mentionDirectory = "Other people mentioned:\n";
             message.mentions.users.forEach(user => {
                 if (user.id !== client.user.id) {
-                    mentionDirectory += `- ${user.username}: to tag them, type exactly <@${user.id}>\n`;
+                    mentionDirectory += `- ${user.username}: type <@${user.id}>\n`;
                 }
             });
         }
 
-        // --- THE FINAL MASTER PROMPT ---
-        const model = genAI.getGenerativeModel(botConfig);
+        // --- COMPILE THE PROMPT ---
         const contextualPrompt = `
         ${chatHistory}
         
-        The user talking to you right now is "${message.author.username}". 
+        The user talking to you is "${message.author.username}". 
         To tag them directly, type exactly: <@${message.author.id}>
         
         ${mentionDirectory}
         
         Their current message to you: "${prompt}"
-        
-        Based on the chat history and their message, give your deadpan Kat response.
         `;
 
-        const result = await model.generateContent(contextualPrompt);
+        const model = genAI.getGenerativeModel(botConfig);
+        
+        // We send an array containing the text AND any images we found
+        const finalPayload = [contextualPrompt, ...imageParts];
+
+        const result = await model.generateContent(finalPayload);
         const response = await result.response;
         let text = response.text();
 
         // --- SENDING THE MESSAGE ---
-        // Split if over 2000 characters (Discord limit)
         if (text.length > 2000) {
             const chunks = text.match(/[\s\S]{1,2000}/g);
             for (const chunk of chunks) {
@@ -146,7 +173,7 @@ client.on("messageCreate", async (message) => {
 
     } catch (error) {
         console.error("Kat Error:", error);
-        message.reply("my brain broke. try again later.");
+        message.reply("my brain broke trying to look at that. try again.");
     }
 });
 
