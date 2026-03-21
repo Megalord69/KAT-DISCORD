@@ -43,23 +43,20 @@ client.on("ready", () => console.log(`${client.user.tag} is online. Custom emoji
 client.on("messageCreate", async (message) => {
     if (message.author.bot) return;
 
-    // 1. SIMPLE FOLLOW-UP LOGIC: Only look at the exact 1 message being replied to
+    // 1. WAKE-UP LOGIC: Is it a reply to Kat?
     let isReplyToBot = false;
-    let previousBotMessage = "";
-
     if (message.reference) {
         try {
             const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
             if (repliedMessage.author.id === client.user.id) {
                 isReplyToBot = true;
-                previousBotMessage = repliedMessage.content;
             }
         } catch (err) {
             console.log("Could not fetch the replied message.");
         }
     }
 
-    // 2. TRIGGER: Mentioned, named, OR is a direct reply
+    // 2. TRIGGER: Mentioned, named "kat", OR is a direct reply
     const isMentioned = message.mentions.has(client.user);
     const containsName = message.content.toLowerCase().includes("kat");
 
@@ -69,15 +66,28 @@ client.on("messageCreate", async (message) => {
     try {
         await message.react(CUSTOM_EMOJI_ID); 
     } catch (error) {
-        console.log(`Custom emoji reaction failed. Did you paste the ID correctly? Error: ${error.message}`);
+        console.log(`Custom emoji reaction failed. Error: ${error.message}`);
     }
 
     const prompt = message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
-    if (!prompt) return message.reply(`You called, boss? ${CUSTOM_EMOJI_FULL}`);
+    if (!prompt) return message.reply("what.");
 
     try {
         await message.channel.sendTyping();
         
+        // 4. THE 5-MESSAGE MEMORY: Fetch the last 6 messages (Current + 5 older)
+        const fetchedMessages = await message.channel.messages.fetch({ limit: 6 });
+        let chatHistory = "--- CHAT HISTORY FOR CONTEXT ---\n";
+        
+        // Reverse them so Kat reads them in normal chronological order
+        fetchedMessages.reverse().forEach(m => {
+            const cleanContent = m.content.replace(/<@!?\d+>/g, '[User Tag]'); // Clean up messy ID tags
+            // Let the AI know which messages it sent vs what humans sent
+            const senderName = m.author.id === client.user.id ? "Kat (You)" : m.author.username;
+            chatHistory += `${senderName}: ${cleanContent}\n`;
+        });
+        chatHistory += "--------------------------------\n";
+
         const model = genAI.getGenerativeModel(botConfig);
         
         let mentionDirectory = "";
@@ -90,13 +100,10 @@ client.on("messageCreate", async (message) => {
             });
         }
         
-        // 4. BUILD THE CONTEXT: If it's a reply, inject that 1 previous message so the bot remembers
-        let contextualPrompt = "";
-        if (isReplyToBot) {
-            contextualPrompt += `[CONTEXT] I previously said to you: "${previousBotMessage}"\n\n`;
-        }
-
-        contextualPrompt += `
+        // Combine the history, the tags, and the current message into one prompt
+        const contextualPrompt = `
+        ${chatHistory}
+        
         The user talking to you right now is "${message.author.username}". 
         To tag them directly, type exactly: <@${message.author.id}>
         
@@ -120,8 +127,12 @@ client.on("messageCreate", async (message) => {
 
     } catch (error) {
         console.error("Error:", error);
-        message.reply(`The system crashed. I'm going to the gym. ${CUSTOM_EMOJI_FULL}`);
+        // Made the crash error match the deadpan Kat vibe
+        message.reply("my brain broke. try again later.");
     }
+});
+
+client.login(process.env.DISCORD_API_KEY);
 });
 
 client.login(process.env.DISCORD_API_KEY);
