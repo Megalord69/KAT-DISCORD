@@ -174,7 +174,7 @@ client.on("messageCreate", async (message) => {
 
     } catch (error) {
         console.error("Kat Error:", error);
-        message.reply("my brain broke trying to look at that. try again.");
+        message.reply("stupid server lagged try again.");
     }
 });
 
